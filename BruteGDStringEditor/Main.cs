@@ -45,7 +45,7 @@ namespace BruteGDStringEditor {
                 byte[] Buffer = Encoding.UTF8.GetBytes(IsLast ? Strs[i] : Strs[i] + "\x0");
                 if (i != 0) {
                     int Offset = SecondPart.Length;
-                    foreach (int offpos in StrOffsets[i])
+                    foreach (int offpos in StrOffsets[i-1])
                         GenDW(Offset).CopyTo(FirstPart, offpos);
                 }
                 Array.Resize(ref SecondPart, SecondPart.Length + Buffer.Length);
