@@ -9,6 +9,8 @@ namespace BruteGDStringEditor {
 
         private int Pos;
         private int EndPos;
+
+        private Dictionary<int, int[]> StrOffsets = new Dictionary<int, int[]>();
         private int[] Offsets;
         public GlobalDataStringEditor(byte[] Script) {
             this.Script = Script;
@@ -43,7 +45,8 @@ namespace BruteGDStringEditor {
                 byte[] Buffer = Encoding.UTF8.GetBytes(IsLast ? Strs[i] : Strs[i] + "\x0");
                 if (i != 0) {
                     int Offset = SecondPart.Length;
-                    GenDW(Offset).CopyTo(FirstPart, Offsets[i - 1]);
+                    foreach (int offpos in StrOffsets[i])
+                        GenDW(Offset).CopyTo(FirstPart, offpos);
                 }
                 Array.Resize(ref SecondPart, SecondPart.Length + Buffer.Length);
                 Array.Copy(Buffer, 0, SecondPart, SecondPart.Length - Buffer.Length, Buffer.Length);
@@ -54,7 +57,13 @@ namespace BruteGDStringEditor {
 
             byte[] Result = FirstPart.Concat(SecondPart).ToArray().Concat(ThirdPart).ToArray();
 
-            UpdateCodeStart(ref Result);
+            int GBNLOffset = IndexOf(Result, "GBNL") + 0x40;
+            GBNLOffset = IndexOf(Result, GBNLOffset, true);
+            int NewPos = UpdateSection(ref Result, "GBNL");
+            GenDW((NewPos + 0x40) - GBNLOffset).CopyTo(Result, GBNLOffset);
+
+            UpdateSection(ref Result, "CODE_START");
+
             int Diff = Result.Length - Script.Length;
             GenDW(GetDW(0x20) + Diff).CopyTo(Result, 0x20);
             GenDW(GetDW(0x2C) + Diff).CopyTo(Result, 0x2C);
@@ -62,14 +71,15 @@ namespace BruteGDStringEditor {
             return Result;
         }
 
-        private void UpdateCodeStart(ref byte[] File) {
-            byte[] Match = Encoding.ASCII.GetBytes("CODE_START");
+        private int UpdateSection(ref byte[] File, string Section) {
+            byte[] Match = Encoding.ASCII.GetBytes(Section);
             for (int i = 0; i < File.Length; i++) {
                 if (EqualsAt(Match, File, i)) {
                     if (i % 16 != 0) {
                         int Del = i % 16;
                         int Add = 16 - Del;
-                        if (Add <= Del) {
+                        byte[] Buff = new byte[Del];
+                        if (Add <= Del || !EqualsAt(Buff, File, i - Del)) {
                             byte[] First = new byte[i + Add];
                             Array.Copy(File, 0, First, 0, i);
 
@@ -77,9 +87,9 @@ namespace BruteGDStringEditor {
                             Array.Copy(File, i, Second, 0, Second.Length);
 
                             File = First.Concat(Second).ToArray();
-                            return;
-                        } else {
+                            return First.Length;
 
+                        } else {
                             byte[] First = new byte[i - Del];
                             Array.Copy(File, 0, First, 0, i - Del);
 
@@ -87,23 +97,32 @@ namespace BruteGDStringEditor {
                             Array.Copy(File, i, Second, 0, Second.Length);
 
                             File = First.Concat(Second).ToArray();
-                            return;
+                            return First.Length;
                         }
                     }                        
                 }
             }
+            return -1;
         }
 
         private void DetectOffsets() {
-            for (int p = Pos - 0x17C, i = Offsets.Length - 1; i > -1; i--) {
-                byte[] DW = GenDW(Offsets[i]);
-                while (p > 0 && !EqualsAt(DW, Script, --p))
-                    continue;
-                if (p <= 0)
-                    throw new Exception("Failed to Search File Offsets");
-                Offsets[i] = p;
+            for (int SOFF = 0; SOFF < Offsets.Length; SOFF++) {
+                byte[] offset = BitConverter.GetBytes(Offsets[SOFF]);
+                for (int i = 0x50; i < Pos; i++)
+                    if (EqualsAt(offset, Script, i)) {
+                        int[] Arr = null;
+                        if (StrOffsets.Keys.Contains(SOFF))
+                            Arr = StrOffsets[SOFF];
+                        else
+                            Arr = new int[0];
+                        int[] NewArr = new int[Arr.Length + 1];
+                        Arr.CopyTo(NewArr, 0);
+                        NewArr[Arr.Length] = i;
+                        StrOffsets[SOFF] = NewArr;
+                    }
             }
         }
+        
 
         private byte[] GenDW(int val) => BitConverter.GetBytes(val);
 
@@ -136,6 +155,23 @@ namespace BruteGDStringEditor {
             Offsets = Offs.ToArray();
         }
 
+        private int IndexOf(byte[] Data, string Str) {
+            byte[] Sig = Encoding.ASCII.GetBytes(Str);
+            for (int i = 0; i < Data.Length - Sig.Length; i++)
+                if (EqualsAt(Sig, Data, i))
+                    return i;
+            return -1;
+        }
+        private int IndexOf(byte[] Data, int Value, bool Relative = false) {
+            byte[] Sig = BitConverter.GetBytes(Value);
+            for (int i = 0; i < Data.Length - Sig.Length; i++) {
+                if (Relative)
+                    Sig = BitConverter.GetBytes(Value - i);
+                if (EqualsAt(Sig, Data, i))
+                    return i;
+            }
+            return -1;
+        }
         private bool EqualsAt(byte[] DataToCompare, byte[] Data, int Pos) {
             if (DataToCompare.Length + Pos > Data.Length)
                 return false;
